@@ -1,0 +1,168 @@
+name: doc-code-consistency
+
+on:
+  pull_request:
+    branches: [develop]
+    # No path filter — exits early if no relevant changes
+
+jobs:
+  consistency-check:
+    name: Documentation-Code Consistency Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install pyyaml httpx
+
+      - name: Determine changed files
+        id: changes
+        run: |
+          base_sha="${{ github.event.pull_request.base.sha }}"
+          head_sha="${{ github.event.pull_request.head.sha }}"
+          changed=$(git diff --name-only "$base_sha" "$head_sha" | tr '\n' ' ')
+          echo "files=$changed" >> "$GITHUB_OUTPUT"
+          if [ -z "$changed" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Load config
+        if: steps.changes.outputs.skip != 'true'
+        id: config
+        run: |
+          docs_dir=$(python -c "import yaml; c=yaml.safe_load(open('.doc-config.yml')); print(c.get('docs_dir','docs'))")
+          mcp_url=$(python -c "import yaml; c=yaml.safe_load(open('.doc-config.yml')); print(c.get('llm',{}).get('docs_agent_mcp_url',''))")
+          echo "docs_dir=$docs_dir" >> "$GITHUB_OUTPUT"
+          echo "mcp_url=$mcp_url" >> "$GITHUB_OUTPUT"
+
+      - name: Check MCP endpoint
+        if: steps.changes.outputs.skip != 'true' && steps.config.outputs.mcp_url != ''
+        run: |
+          echo "Checking MCP endpoint: ${{ steps.config.outputs.mcp_url }}"
+          RESPONSE=$(curl -s --max-time 10 -X POST "${{ steps.config.outputs.mcp_url }}" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json, text/event-stream" \
+            -H "Authorization: Bearer ${{ secrets.LITELLM_API_KEY }}" \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"health-check","version":"1.0"}}}' 2>/dev/null || echo '{"error":"unreachable"}')
+          echo "MCP response: $RESPONSE"
+          if echo "$RESPONSE" | grep -qi 'not found\|"error"\|unreachable\|access_denied'; then
+            echo "::error::MCP server not available. Response: $RESPONSE"
+            echo "::error::Ensure the docs-agent MCP server is registered on the LiteLLM gateway and the API key has MCP access."
+            exit 1
+          fi
+          echo "MCP endpoint is healthy"
+
+      - name: Generate Claude settings
+        if: steps.changes.outputs.skip != 'true'
+        run: |
+          MCP_URL="${{ steps.config.outputs.mcp_url }}"
+          MCP_BLOCK=""
+          MCP_TOOLS=""
+          if [ -n "$MCP_URL" ]; then
+            MCP_BLOCK=$(cat << MCPEOF
+            "mcpServers": {
+              "doc-templates": {
+                "type": "http",
+                "url": "$MCP_URL"
+              }
+            },
+          MCPEOF
+          )
+            MCP_TOOLS=', "mcp__doc-templates__list_templates", "mcp__doc-templates__get_template", "mcp__doc-templates__evaluate_doc"'
+          fi
+          mkdir -p .claude
+          cat > .claude/settings.json << SETTINGSEOF
+          {
+            ${MCP_BLOCK}
+            "permissions": {
+              "allow": ["Read", "Grep", "Glob", "Bash"${MCP_TOOLS}]
+            }
+          }
+          SETTINGSEOF
+
+      - name: Run consistency check
+        if: steps.changes.outputs.skip != 'true'
+        uses: anthropics/claude-code-action@v1
+        env:
+          ANTHROPIC_BASE_URL: "https://llm-gateway.epublishment.com"
+          ANTHROPIC_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          # claude_args --model is dropped in the action's SDK path, and the gateway
+          # API key reads as an Opus-default tier — so pin the model via env vars.
+          # ANTHROPIC_MODEL sets the main session model; the OPUS/SONNET alias defaults
+          # catch any internal alias resolution (opusplan, subagents). Haiku is left at
+          # its default for cheap background tasks.
+          ANTHROPIC_MODEL: anthropic/claude-sonnet-4-5-20250929
+          ANTHROPIC_DEFAULT_OPUS_MODEL: anthropic/claude-sonnet-4-5-20250929
+          ANTHROPIC_DEFAULT_SONNET_MODEL: anthropic/claude-sonnet-4-5-20250929
+        with:
+          anthropic_api_key: ${{ secrets.LITELLM_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: "--model claude-sonnet-4-5-20250929"
+          prompt: |
+            # Documentation-Code Consistency Check
+
+            ## Context
+            You are reviewing a pull request for documentation-code consistency.
+            The project documentation lives in `${{ steps.config.outputs.docs_dir }}/`.
+
+            ## Changed files
+            ${{ steps.changes.outputs.files }}
+
+            ## Instructions
+            1. Fetch templates by category:
+               - Specification templates: `list_templates(category="specification")` — for `${{ steps.config.outputs.docs_dir }}/` files
+               - Repository templates: `list_templates(category="repository")` — for root-level files (e.g. README.md)
+            2. For each changed documentation file in `${{ steps.config.outputs.docs_dir }}/`:
+               - Read the file and identify its `type` from frontmatter
+               - Use `get_template` to fetch the matching specification template
+               - Use `evaluate_doc` to check structural compliance
+               - Explore the codebase to find related source code
+               - Verify the documentation accurately reflects the code
+            3. For each changed root-level doc (e.g. README.md):
+               - Use `get_template` to fetch the matching repository template
+               - Use `evaluate_doc` to check structural compliance
+            4. For each changed code file:
+               - Identify which documentation files reference or describe this code
+               - Verify those docs are still accurate
+            5. Write a markdown report to `.github/scripts/consistency_report.md` with TWO clearly separated sections:
+
+            ### Structural Checks (evaluate_doc)
+            Report ONLY findings from the `evaluate_doc()` MCP tool in this section.
+            Use these markers: 🔴 `[ERROR]` for missing required sections or frontmatter violations, 🟡 `[WARNING]` for minor structural issues, ✅ `[PASS]` for compliant documents.
+            These are deterministic and may block the PR.
+
+            ### Code Accuracy Review (advisory)
+            Report your subjective code-vs-doc analysis in this section.
+            Use ONLY ⚠️ `[ADVISORY]` markers. Do NOT use 🔴, `[ERROR]`, or `BLOCKED` in this section — these findings are informational only and must not block the PR.
+
+      - name: Post PR comment
+        if: always() && steps.changes.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: python .github/scripts/github_pr.py consistency_report
+
+      - name: Fail on error-severity findings
+        if: always() && hashFiles('.github/scripts/consistency_report.md') != ''
+        run: |
+          DETERMINISTIC=$(sed -n '/^### Structural Checks/,/^### [^S]/p' .github/scripts/consistency_report.md | head -n -1)
+          if echo "$DETERMINISTIC" | grep -qiE '🔴|\[ERROR\]'; then
+            echo "::error::Structural documentation checks found errors. See PR comment."
+            exit 1
+          fi
+          echo "No blocking errors in structural checks."

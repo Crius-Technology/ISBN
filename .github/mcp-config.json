@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "doc-templates": {
+      "type": "http",
+      "url": "${DOCS_AGENT_MCP_URL}"
+    },
+    "alice-docs": {
+      "type": "http",
+      "url": "${ALICE_DOCS_MCP_URL}"
+    },
+    "xproc-agent": {
+      "type": "http",
+      "url": "${XPROC_AGENT_MCP_URL}"
+    },
+    "redmine": {
+      "type": "http",
+      "url": "${REDMINE_MCP_URL}"
+    }
+  }
+}

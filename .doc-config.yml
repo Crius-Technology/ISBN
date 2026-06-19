@@ -1,0 +1,19 @@
+# Documentation automation configuration
+# Copy this file to your repository root and fill in the values.
+
+project_name: ""          # REQUIRED - used for doc-sync path, labels, branch prefix
+docs_dir: "docs"          # where documentation lives (e.g. "docs", "00-docs")
+
+# Documentation sync to external docs repository
+doc_sync:
+  target_repo: ""                     # e.g. "MyOrg/my-docs"
+  target_base_path: ""                # e.g. "docusaurus/technology"
+  github_app_id: 0                    # GitHub App ID for cross-repo access
+  sidebar_file: ""                      # Docusaurus sidebar file (e.g. "sidebarsTechnology.ts")
+  sidebar_categories: []              # Docusaurus sidebar categories
+  # Example:
+  # - { path: "", label: "My Project", position: 1, collapsible: true, collapsed: false }
+
+# LLM configuration for AI-powered workflows
+llm:
+  docs_agent_mcp_url: "https://llm-gateway.epublishment.com/docs_agent/mcp"

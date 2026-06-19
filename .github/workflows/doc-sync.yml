@@ -1,0 +1,148 @@
+name: doc-sync
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+jobs:
+  sync-docs:
+    name: Sync Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          path: source
+
+      - name: Load config and check for doc changes
+        id: config
+        working-directory: source
+        run: |
+          python -c "
+          import yaml, subprocess
+          c = yaml.safe_load(open('.doc-config.yml'))
+          sync = c.get('doc_sync', {})
+          docs_dir = c.get('docs_dir', 'docs')
+          print(f\"target_repo={sync.get('target_repo', '')}\")
+          print(f\"app_id={sync.get('github_app_id', 0)}\")
+          print(f\"project_name={c.get('project_name', '')}\")
+          print(f\"docs_dir={docs_dir}\")
+          " >> "$GITHUB_OUTPUT"
+
+          # Skip change detection on manual trigger — always sync
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "Manual trigger — skipping change detection."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            # Check if any changed files are in docs_dir or are root-level markdown
+            DOCS_DIR=$(python -c "import yaml; print(yaml.safe_load(open('.doc-config.yml')).get('docs_dir','docs'))")
+            CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "")
+            if [ -z "$CHANGED" ]; then
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+            else
+              HAS_DOCS=false
+              while IFS= read -r file; do
+                if [[ "$file" == "$DOCS_DIR/"* ]] || [[ "$file" == *.md && "$file" != */* ]]; then
+                  HAS_DOCS=true
+                  break
+                fi
+              done <<< "$CHANGED"
+              if [ "$HAS_DOCS" = true ]; then
+                echo "skip=false" >> "$GITHUB_OUTPUT"
+              else
+                echo "No documentation changes detected (docs_dir=$DOCS_DIR)."
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+              fi
+            fi
+          fi
+
+      - name: Generate GitHub App token
+        if: steps.config.outputs.skip != 'true' && steps.config.outputs.target_repo != '' && steps.config.outputs.app_id != '0'
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ steps.config.outputs.app_id }}
+          private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ steps.config.outputs.target_repo }}
+
+      - name: Checkout target
+        if: steps.config.outputs.skip != 'true' && steps.config.outputs.target_repo != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/${{ steps.config.outputs.target_repo }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: target
+
+      - name: Sync documentation
+        if: steps.config.outputs.skip != 'true' && steps.config.outputs.target_repo != ''
+        id: sync
+        working-directory: source
+        run: |
+          OUTPUT=$(python .github/scripts/doc_sync.py ../source ../target)
+          echo "$OUTPUT"
+          if echo "$OUTPUT" | grep -q "BROKEN_LINKS=true"; then
+            echo "broken_links=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create PR on target
+        if: steps.config.outputs.skip != 'true' && steps.config.outputs.target_repo != ''
+        working-directory: target
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No documentation changes to sync."
+            exit 0
+          fi
+
+          BRANCH="doc-sync/${{ steps.config.outputs.project_name }}-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b "$BRANCH"
+
+          git commit -m "sync: update ${{ steps.config.outputs.project_name }} documentation from source
+
+          Auto-synced from ${{ steps.config.outputs.project_name }} on merge to develop."
+
+          git push -u origin "$BRANCH"
+
+          PR_BODY=$(cat <<'PREOF'
+          ## Summary
+          - Auto-synced documentation on merge to develop
+
+          *This PR was created automatically by the doc-sync workflow.*
+          PREOF
+          )
+
+          REPORT_FILE="broken_links_report.md"
+          if [ "${{ steps.sync.outputs.broken_links }}" = "true" ] && [ -f "$REPORT_FILE" ]; then
+            PR_BODY="$PR_BODY
+
+          ---
+
+          $(cat "$REPORT_FILE")"
+          fi
+
+          if [ "${{ steps.sync.outputs.broken_links }}" = "true" ]; then
+            echo "::error::Broken links detected in synced documentation. Fix in source repository."
+            cat "$REPORT_FILE"
+            exit 1
+          fi
+
+          gh pr create \
+            --repo "${{ github.repository_owner }}/${{ steps.config.outputs.target_repo }}" \
+            --title "sync: update ${{ steps.config.outputs.project_name }} documentation" \
+            --body "$PR_BODY"
