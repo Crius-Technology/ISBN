@@ -1,3 +1,15 @@
+---
+title: "ISBN Database -- Analysis Examples"
+type: reference
+status: draft
+author: "Crius Technology"
+sidebar_label: Analysis
+sidebar_position: 5
+tags:
+  - isbn
+  - analysis
+---
+
 # Analysis Examples
 
 The `editions` table (39.15 M rows) keyed by canonical ISBN-13. Connect:

@@ -1,91 +1,118 @@
-# ISBN
+---
+title: "ISBN Metadata Database"
+type: project-readme
+status: draft
+author: "Crius Technology"
+sidebar_label: Project README
+tags:
+  - isbn
+  - data-pipeline
+---
 
-A database of ISBN / book metadata aggregated from authoritative and trade sources, built for
-**publisher and market analysis**. Records from multiple national libraries, the open-data
-ecosystem, and (optionally) paid trade feeds are normalized to a single canonical ISBN-13 key,
-deduplicated by source authority, quality-scored, and tagged with the issuing country/language area.
+# ISBN Metadata Database
 
-Priority markets: **UK & Germany**, then **US**, then **Norway & Sweden**.
+![Python](https://img.shields.io/badge/python-3.13%2B-blue) ![Database](https://img.shields.io/badge/postgres-16-blue) ![License](https://img.shields.io/badge/license-internal-lightgrey)
 
-## What's in the database
+## Description
 
-One row per canonical ISBN-13 in PostgreSQL (`editions` table), merged across sources by authority
-(registrar > national library > aggregator > crowd). Currently ingested:
+A batch pipeline and analytical database that aggregates book metadata from authoritative and trade
+sources — national libraries (DNB, LIBRIS), open data (Open Library), and optionally paid trade feeds
+(Nielsen, VLB) — into a single PostgreSQL table keyed by canonical ISBN-13. Records are deduplicated
+and merged by source authority, validated, quality-scored, and tagged with the issuing
+country/language area, so the corpus can be queried directly for **publisher and market analysis**.
+Priority markets: UK & Germany, then US, then Norway & Sweden.
 
-| Source | Type | License | Editions |
-|--------|------|---------|---------:|
-| Open Library | global, crowd-sourced | public domain | ~31.6 M |
-| DNB (Deutsche Nationalbibliothek) | German national library | CC0 | ~7.5 M |
-| LIBRIS (National Library of Sweden) | Swedish national bibliography | CC0 | harvesting (OAI-PMH) |
-| NielsenIQ BookData (UK) | UK ISBN agency, ONIX | paid | ingester ready — see `docs/PROCUREMENT.md` |
+## Key Features
 
-≈39 M editions, **0 invalid ISBNs** (all check-digit validated on ingest). Per-record completeness:
-title 100%, publisher 98.7%, year 98.3%. See `docs/SOURCES.md` for the full source research and
-`docs/ANALYSIS.md` for example queries.
+- **Multi-source ingest** — Open Library (TSV/JSON), DNB (binary MARC21), LIBRIS (OAI-PMH MARCXML),
+  and ONIX 3.0 (Nielsen/VLB), each streaming and resumable.
+- **Canonical identity** — every record is keyed by a check-digit-validated ISBN-13 (ISBN-10s
+  normalized in); ~39 M editions ingested with zero invalid ISBNs.
+- **Source-priority merge** — one row per ISBN, the more authoritative source winning
+  (registrar > national library > aggregator > crowd).
+- **Per-record quality scoring** — 0–100 score plus explainable flags (completeness + source
+  authority + plausibility).
+- **Source-independent country attribution** — `registration_area` derived from the ISBN prefix using
+  the official International ISBN Agency range data.
+- **Single command per stage** — `isbn-db` CLI for ingest, scoring, area derivation, and stats.
 
-## Architecture
-
-```
-ingest (per source) ──▶ normalize to ISBN-13 ──▶ editions (Postgres)
-                                                   ├─ source-priority merge (dedupe)
-                                                   ├─ quality_score + quality_flags
-                                                   └─ registration_area (from ISBN)
-```
-
-- `src/isbn_db/isbn.py` — ISBN-10/13 validation, normalization, conversion (canonical key = ISBN-13).
-- `src/isbn_db/sources.py` — source registry (tier, cost, licensing) driving the cross-source merge.
-- `src/isbn_db/db.py` — schema + source-priority merge upsert.
-- `src/isbn_db/ingest/` — streaming, resumable ingest:
-  - `openlibrary.py` (TSV/JSON dumps), `dnb.py` (binary MARC21)
-  - `marc.py` — shared MARC21 field extraction (DNB + LIBRIS)
-  - `libris.py` — LIBRIS OAI-PMH MARCXML harvester (datestamp-chunked, resumable)
-  - `onix.py` — ONIX 3.0 ingester for paid feeds (Nielsen UK, VLB DE)
-- `src/isbn_db/quality.py` — per-record quality score (completeness + source authority + plausibility).
-- `src/isbn_db/geo.py` — `registration_area` from the ISBN prefix (country/language area), source-independent.
-- `src/isbn_db/cli.py` — the `isbn-db` command.
-
-## Quick start
+## Quick Start
 
 ```bash
+# Clone the repository
+git clone git@github.com:Crius-Technology/ISBN.git
+cd ISBN
+
+# Install dependencies
 uv sync --extra dev
 
-# Postgres (dedicated, isolated on port 5433)
-docker run -d --name isbn-postgres -e POSTGRES_USER=isbn -e POSTGRES_PASSWORD=isbn \
-  -e POSTGRES_DB=isbn -p 5433:5432 -v isbn_pgdata:/var/lib/postgresql/data \
+# Start PostgreSQL (isolated on port 5433)
+docker run -d --name isbn-postgres \
+  -e POSTGRES_USER=isbn -e POSTGRES_PASSWORD=isbn -e POSTGRES_DB=isbn \
+  -p 5433:5432 -v isbn_pgdata:/var/lib/postgresql/data \
   --restart unless-stopped postgres:16-alpine
 
+# Initialise the schema and check the connection
 uv run isbn-db init-db
+uv run isbn-db stats
 ```
 
-Connection DSN (override with `ISBN_DB_DSN`): `postgresql://isbn:isbn@localhost:5433/isbn`
+> For full setup, ingest, testing, and operational tasks, see the [Operations Guide](docs/operations-guide.md).
 
-## Pipeline commands
+## Tech Stack
 
-```bash
-# Ingest
-./scripts/run_full_ingest.sh                                   # Open Library + DNB (download + ingest, resumable)
-uv run isbn-db ingest-libris                                   # Swedish national bibliography (OAI-PMH)
-uv run isbn-db ingest-onix nielsen.onix.xml --source nielsen   # paid ONIX file (UK), once delivered
+| Layer | Technology |
+|---|---|
+| **Language** | Python 3.13+ |
+| **Runtime** | CPython, `uv`-managed virtualenv |
+| **Framework** | `argparse` CLI + `psycopg` 3 |
+| **Database** | PostgreSQL 16 |
+| **Parsing** | `pymarc` (MARC/MARCXML), stdlib (JSON/XML/ONIX) |
+| **Tooling** | `ruff`, `pytest`, SonarQube |
+| **Container** | Docker 24+ (PostgreSQL, Sonar scanner) |
+| **CI/CD** | None configured yet |
 
-# Enrich + analyze
-uv run isbn-db score          # per-record quality scores (run after each ingest)
-uv run isbn-db derive-areas   # country/language area from each ISBN
-uv run isbn-db quality        # score distribution + flags
-uv run isbn-db areas          # editions by registration area
-uv run isbn-db stats          # row counts + ingest progress
+## Project Structure
+
+```
+ISBN/
+├── src/isbn_db/          # Application package
+│   ├── isbn.py           # ISBN-10/13 validation & normalization
+│   ├── sources.py        # Source registry (tier/cost/licensing)
+│   ├── db.py             # Schema + source-priority merge upsert
+│   ├── quality.py        # Per-record quality scoring
+│   ├── geo.py            # registration_area derivation
+│   ├── ingest/           # One module per source format (+ shared MARC)
+│   └── cli.py            # `isbn-db` entry point
+├── tests/                # pytest unit tests
+├── scripts/              # run_full_ingest.sh, build_report.py, build_isbn_groups.py
+├── docs/                 # Project documentation
+├── sonar-project.properties
+└── README.md             # This file
 ```
 
-## Development
+## Documentation
 
-```bash
-uv run pytest                 # unit tests
-uv run ruff check . && uv run ruff format .
-./../../sonar-scan.sh "$(pwd)" --token "$SONAR_TOKEN"   # SonarQube scan
-```
+| Document | Description |
+|---|---|
+| [Operations Guide](docs/operations-guide.md) | Setup, running, testing, common tasks, troubleshooting |
+| [Software Design](docs/software-design.md) | Architecture, data model, merge and scoring design |
+| [Configuration Reference](docs/configuration-reference.md) | Environment variables and settings |
+| [Sources](docs/SOURCES.md) | Where the data comes from (paid/free, quality, licensing) |
+| [Analysis](docs/ANALYSIS.md) | Example analytical queries |
+| [Procurement](docs/PROCUREMENT.md) | How to procure the paid trade feeds (Nielsen, VLB) |
 
-## Source strategy
+## Contributing
 
-Free authoritative backbone (DNB · Open Library · LIBRIS · Library of Congress) → targeted paid
-one-offs for trade richness (Nielsen UK · VLB DE · ISBNdb) → reference-only for gap analysis &
-enrichment (Anna's Archive · Google Books). Licensing and details in [`docs/SOURCES.md`](docs/SOURCES.md);
-paid-feed procurement in [`docs/PROCUREMENT.md`](docs/PROCUREMENT.md).
+1. Create a feature branch from `develop`
+2. Make your changes following the conventions in [CLAUDE.md](CLAUDE.md)
+3. Ensure all tests pass: `uv run pytest`
+4. Ensure linting passes: `uv run ruff check .`
+5. Run the SonarQube scan before committing (see the Operations Guide)
+6. Open a Pull Request into `develop` with a clear description
+
+## License
+
+Internal project of Crius Technology. Not licensed for external distribution. Note that ingested
+source data carries its own licences (e.g. CC0, public domain, or commercial) — see
+[docs/SOURCES.md](docs/SOURCES.md) for per-source terms before redistributing any derived data.

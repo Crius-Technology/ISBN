@@ -1,3 +1,15 @@
+---
+title: "Paid Source Procurement"
+type: reference
+status: draft
+author: "Crius Technology"
+sidebar_label: Procurement
+sidebar_position: 6
+tags:
+  - isbn
+  - procurement
+---
+
 # Paid Source Procurement
 
 The free authoritative sources (Open Library, DNB, LIBRIS) are ingested automatically. The remaining

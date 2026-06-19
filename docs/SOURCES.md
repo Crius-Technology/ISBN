@@ -1,3 +1,15 @@
+---
+title: "ISBN / Book-Metadata Sources"
+type: reference
+status: draft
+author: "Crius Technology"
+sidebar_label: Sources
+sidebar_position: 4
+tags:
+  - isbn
+  - sources
+---
+
 # ISBN / Book-Metadata Sources
 
 Research catalogue of where to obtain valid ISBN data for building this database. Structured form
