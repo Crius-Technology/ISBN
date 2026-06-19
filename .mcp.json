@@ -1,0 +1,34 @@
+{
+  "mcpServers": {
+    "doc-templates": {
+      "type": "http",
+      "url": "https://llm-gateway.epublishment.com/docs_agent/mcp",
+      "headers": { "Authorization": "Bearer ${LITELLM_API_KEY}" }
+    },
+    "alice-docs": {
+      "type": "http",
+      "url": "https://llm-gateway.epublishment.com/alice_docs_mcp/mcp",
+      "headers": { "Authorization": "Bearer ${LITELLM_API_KEY}" }
+    },
+    "knowledge-graph": {
+      "type": "http",
+      "url": "https://llm-gateway.epublishment.com/graph_mcp/mcp",
+      "headers": { "Authorization": "Bearer ${LITELLM_API_KEY}" }
+    },
+    "xproc-agent": {
+      "type": "http",
+      "url": "https://llm-gateway.epublishment.com/xproc_agent_mcp/mcp",
+      "headers": { "Authorization": "Bearer ${LITELLM_API_KEY}" }
+    },
+    "redmine": {
+      "type": "http",
+      "url": "https://llm-gateway.epublishment.com/redmine_mcp/mcp",
+      "headers": { "Authorization": "Bearer ${LITELLM_API_KEY}" }
+    },
+    "n8n-mcp": {
+      "type": "http",
+      "url": "https://n8n.epublishment.com/mcp-server/http",
+      "headers": { "Authorization": "Bearer ${BEARER_TOKEN_N8N}" }
+    }
+  }
+}

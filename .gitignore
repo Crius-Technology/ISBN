@@ -24,3 +24,6 @@ data/
 # Generated reports (regenerate with scripts/build_report.py)
 docs/report.html
 RangeMessage.xml
+
+# IDE
+*.iml
