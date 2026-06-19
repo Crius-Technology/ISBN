@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Data dumps (large, never commit)
+data/
+*.txt.gz
+*.marc
+*.mrc
+*.xml.gz
+*.benc.zst
+
+# Env / secrets
+.env
+
+# Local Claude settings (personal, not shared)
+.claude/settings.local.json
+
+# Generated reports (regenerate with scripts/build_report.py)
+docs/report.html
+RangeMessage.xml
