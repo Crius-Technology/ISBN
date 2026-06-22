@@ -49,6 +49,7 @@ BISAC/Thema.
 uv sync --extra dev
 uv run isbn-db init-db
 ./scripts/run_full_ingest.sh                                 # Open Library + DNB (resumable)
+./scripts/fetch_loc.sh && uv run isbn-db ingest-loc data/loc/*.utf8   # Library of Congress (US, free, ~10GB)
 uv run isbn-db ingest-libris                                 # Swedish national bibliography
 uv run isbn-db ingest-onix <file>.xml --source nielsen       # paid ONIX feed
 uv run isbn-db score          # quality scores (run after each ingest)

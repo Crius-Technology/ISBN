@@ -19,6 +19,8 @@ from .ingest import libris, onix
 from .ingest.common import open_gzip_text, run_ingest
 from .ingest.dnb import SOURCE as DNB_SOURCE
 from .ingest.dnb import iter_editions_from_path
+from .ingest.loc import SOURCE as LOC_SOURCE
+from .ingest.loc import iter_editions_from_path as loc_iter_editions_from_path
 from .ingest.openlibrary import SOURCE as OL_SOURCE
 from .ingest.openlibrary import iter_editions
 
@@ -45,6 +47,14 @@ def cmd_ingest_dnb(args: argparse.Namespace) -> int:
         dump_file = os.path.basename(path)
         records = iter_editions_from_path(path)
         run_ingest(DNB_SOURCE, dump_file, records, limit=args.limit, resume=not args.no_resume, log=_log)
+    return 0
+
+
+def cmd_ingest_loc(args: argparse.Namespace) -> int:
+    for path in args.paths:
+        dump_file = os.path.basename(path)
+        records = loc_iter_editions_from_path(path)
+        run_ingest(LOC_SOURCE, dump_file, records, limit=args.limit, resume=not args.no_resume, log=_log)
     return 0
 
 
@@ -178,6 +188,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_dnb.add_argument("--limit", type=int, default=None)
     p_dnb.add_argument("--no-resume", action="store_true")
     p_dnb.set_defaults(func=cmd_ingest_dnb)
+
+    p_loc = sub.add_parser("ingest-loc", help="ingest Library of Congress MARC files (BooksAll.*.utf8.gz)")
+    p_loc.add_argument("paths", nargs="+")
+    p_loc.add_argument("--limit", type=int, default=None)
+    p_loc.add_argument("--no-resume", action="store_true")
+    p_loc.set_defaults(func=cmd_ingest_loc)
 
     p_lib = sub.add_parser("ingest-libris", help="harvest the Swedish national bibliography via OAI-PMH")
     p_lib.add_argument("--from-year", type=int, default=2002)
