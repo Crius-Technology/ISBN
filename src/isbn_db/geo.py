@@ -17,6 +17,8 @@ import json
 from functools import lru_cache
 from importlib.resources import files
 
+import pycountry
+
 from .db import connect
 
 _GROUPS: dict[str, str] = json.loads(files("isbn_db").joinpath("data", "isbn_groups.json").read_text(encoding="utf-8"))
@@ -73,4 +75,118 @@ def derive_all(*, batch: int = 1_000_000, redo: bool = False, log=print) -> int:
                 break
             total += n
             log(f"[geo] derived area for {total:,} rows")
+    return total
+
+
+# --- Area classification ---------------------------------------------------------------------
+#
+# A registration_area is the ISBN agency's label, which is NOT always a single country. We classify
+# each label deterministically so a UI can treat them correctly (e.g. never plot a language area on a
+# single point, and offer a real per-country / map view only for `country` rows with an ISO code).
+
+AREA_COUNTRY = "country"            # a single sovereign/territory with an ISO code
+AREA_LANGUAGE = "language_area"     # spans multiple countries (English/German/French)
+AREA_REGION = "region"             # multi-country geographic agency
+AREA_HISTORICAL = "historical"     # superseded state still issuing under the old prefix
+AREA_ADMIN = "administrative"      # reserved / supranational / non-geographic ranges
+
+# Labels that are multi-country regions or non-geographic admin groups (cannot be inferred from text).
+_REGION = {"Caribbean Community", "South Pacific"}
+_ADMIN = {
+    "Reserved Agency",
+    "Federated Panel",
+    "International NGO Publishers",
+    "International NGO Publishers and EU Organizations",
+}
+# ISO 3166-1 alpha-2 for labels pycountry cannot resolve by name. None = no single ISO (sub-national).
+_ISO_OVERRIDES: dict[str, str | None] = {
+    "China, People's Republic": "CN",
+    "Hong Kong, China": "HK",
+    "Korea, P.D.R.": "KP",
+    "Korea, Republic": "KR",
+    "Kosova": "XK",
+    "Macau": "MO",
+    "Palestine": "PS",
+    "Zambia registration group": "ZM",
+    "Srpska, Republic of": None,  # entity within Bosnia and Herzegovina; no sovereign ISO code
+}
+
+
+@lru_cache(maxsize=512)
+def classify_area(area: str | None) -> tuple[str | None, str | None]:
+    """Deterministically map a registration area to ``(area_kind, country_iso2)``.
+
+    ``country_iso2`` is populated only for single-country areas (``AREA_COUNTRY``); language areas,
+    regions, historical states, and administrative ranges have no single ISO code.
+    """
+    if not area:
+        return (None, None)
+    if "language" in area.lower():
+        return (AREA_LANGUAGE, None)
+    if area.lower().startswith("former "):
+        return (AREA_HISTORICAL, None)
+    if area in _REGION:
+        return (AREA_REGION, None)
+    if area in _ADMIN:
+        return (AREA_ADMIN, None)
+    if area in _ISO_OVERRIDES:
+        return (AREA_COUNTRY, _ISO_OVERRIDES[area])
+    try:
+        return (AREA_COUNTRY, pycountry.countries.lookup(area).alpha_2)
+    except LookupError:
+        return (AREA_COUNTRY, None)  # a country we couldn't ISO-resolve; still a single country
+
+
+def is_single_country(area: str | None) -> bool:
+    return classify_area(area)[0] == AREA_COUNTRY
+
+
+def area_meta() -> dict[str, tuple[str | None, str | None]]:
+    """Classification for every known agency label (the distinct values in the group table)."""
+    return {label: classify_area(label) for label in set(_GROUPS.values())}
+
+
+def classify_all(*, redo: bool = False, log=print) -> int:
+    """Populate ``area_kind`` and ``country_iso2`` from ``registration_area``.
+
+    Maintains a small ``isbn_area_meta`` dimension table (one row per agency label) and joins it to
+    ``editions``. Deterministic and idempotent; safe to run alongside an active ingest.
+    """
+    total = 0
+    with connect() as conn:
+        conn.execute("ALTER TABLE editions ADD COLUMN IF NOT EXISTS area_kind TEXT")
+        conn.execute("ALTER TABLE editions ADD COLUMN IF NOT EXISTS country_iso2 TEXT")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS isbn_area_meta "
+            "(registration_area TEXT PRIMARY KEY, area_kind TEXT, country_iso2 TEXT)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS editions_country_iso2_idx ON editions (country_iso2)")
+        conn.commit()
+
+        meta_rows = [(label, kind, iso) for label, (kind, iso) in area_meta().items()]
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO isbn_area_meta (registration_area, area_kind, country_iso2) VALUES (%s,%s,%s) "
+                "ON CONFLICT (registration_area) DO UPDATE SET area_kind=EXCLUDED.area_kind, "
+                "country_iso2=EXCLUDED.country_iso2",
+                meta_rows,
+            )
+        conn.commit()
+        if redo:
+            conn.execute("UPDATE editions SET area_kind = NULL, country_iso2 = NULL")
+            conn.commit()
+
+        sql = (
+            "UPDATE editions e SET area_kind = m.area_kind, country_iso2 = m.country_iso2 "
+            "FROM isbn_area_meta m WHERE e.registration_area = m.registration_area AND e.isbn13 IN ("
+            "SELECT isbn13 FROM editions WHERE registration_area IS NOT NULL AND area_kind IS NULL "
+            "LIMIT %(batch)s FOR UPDATE SKIP LOCKED)"
+        )
+        while True:
+            n = conn.execute(sql, {"batch": 1_000_000}).rowcount
+            conn.commit()
+            if n == 0:
+                break
+            total += n
+            log(f"[geo] classified {total:,} rows")
     return total

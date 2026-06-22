@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS editions (
     quality_score    SMALLINT,
     quality_flags    TEXT[],
     registration_area TEXT,
+    area_kind        TEXT,
+    country_iso2     TEXT,
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -43,12 +45,15 @@ CREATE TABLE IF NOT EXISTS editions (
 ALTER TABLE editions ADD COLUMN IF NOT EXISTS quality_score SMALLINT;
 ALTER TABLE editions ADD COLUMN IF NOT EXISTS quality_flags TEXT[];
 ALTER TABLE editions ADD COLUMN IF NOT EXISTS registration_area TEXT;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS area_kind TEXT;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS country_iso2 TEXT;
 
 CREATE INDEX IF NOT EXISTS editions_source_idx        ON editions (source);
 CREATE INDEX IF NOT EXISTS editions_publisher_idx     ON editions (publisher);
 CREATE INDEX IF NOT EXISTS editions_publish_year_idx  ON editions (publish_year);
 CREATE INDEX IF NOT EXISTS editions_quality_idx       ON editions (quality_score);
 CREATE INDEX IF NOT EXISTS editions_area_idx          ON editions (registration_area);
+CREATE INDEX IF NOT EXISTS editions_country_iso2_idx  ON editions (country_iso2);
 
 CREATE TABLE IF NOT EXISTS ingest_state (
     source            TEXT NOT NULL,

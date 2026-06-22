@@ -87,26 +87,36 @@ Adding a raw per-source layer to enable agreement checks is future work.*
 
 `registration_area` is derived from the ISBN registration-group prefix (see `src/isbn_db/geo.py`,
 data from the International ISBN Agency RangeMessage) — it reflects the country/language area that
-**issued** the ISBN, independent of which source supplied the record. Populate with
-`uv run isbn-db derive-areas`; view with `uv run isbn-db areas`.
+**issued** the ISBN, independent of which source supplied the record. Each area is then classified
+deterministically into `area_kind` (`country` / `language_area` / `region` / `historical` /
+`administrative`) with an ISO code (`country_iso2`) for single countries. Populate with
+`uv run isbn-db derive-areas` (derives + classifies); view with `uv run isbn-db areas`.
 
 ```sql
--- True title distribution by issuing country/language area (not biased by source coverage)
-SELECT registration_area, count(*) FROM editions GROUP BY 1 ORDER BY 2 DESC LIMIT 20;
+-- Map-ready: editions per single country (ISO code present)
+SELECT country_iso2, registration_area, count(*) FROM editions
+WHERE area_kind = 'country' AND country_iso2 IS NOT NULL
+GROUP BY 1,2 ORDER BY 3 DESC LIMIT 20;
+
+-- Non-country buckets (language areas, regions, admin) — handle separately, never as a country
+SELECT area_kind, registration_area, count(*) FROM editions
+WHERE area_kind <> 'country' GROUP BY 1,2 ORDER BY 3 DESC;
 
 -- German-language output over time, regardless of source
 SELECT publish_year, count(*) FROM editions
 WHERE registration_area = 'German language' AND publish_year BETWEEN 2000 AND 2025
 GROUP BY 1 ORDER BY 1;
-
--- Compare a source's coverage vs the ISBN universe for an area
-SELECT source, count(*) FROM editions WHERE registration_area = 'Sweden' GROUP BY 1 ORDER BY 2 DESC;
 ```
 
-Note: areas like "English language" (978-0/978-1) and "German language" (978-3) are language areas
-spanning several countries; others (Sweden 978-91, United States 979-8) are single countries. The
-ISBN encodes the *registration* area, which is the publisher's agency — a strong but not perfect
-proxy for where a book was published.
+Why classification matters:
+- "English language" (978-0/978-1) and "German language" (978-3) are **language areas** spanning
+  several countries — `area_kind='language_area'`, no single ISO. Single countries like Sweden
+  (978-91) and United States (979-8) get `area_kind='country'` + an ISO code.
+- ⚠️ The **UK cannot be isolated** from the ISBN — it shares "English language" with the US/AU/etc.
+  A real per-country UK view needs a UK-scoped source (`source='nielsen'`). See
+  [UI Data Model](./ui-data-model.md) for the full geographic-segregation design.
+- The ISBN encodes the *registration* area (the publisher's agency) — a strong but imperfect proxy
+  for where a book was published.
 
 ## Notes on merge semantics
 - One row per ISBN-13. When the same ISBN appears in multiple sources, the higher-tier source wins

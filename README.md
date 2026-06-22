@@ -32,8 +32,9 @@ Priority markets: UK & Germany, then US, then Norway & Sweden.
   (registrar > national library > aggregator > crowd).
 - **Per-record quality scoring** — 0–100 score plus explainable flags (completeness + source
   authority + plausibility).
-- **Source-independent country attribution** — `registration_area` derived from the ISBN prefix using
-  the official International ISBN Agency range data.
+- **Source-independent country attribution** — `registration_area` from the ISBN prefix (official
+  International ISBN Agency data), deterministically classified into `area_kind` (country vs
+  language-area vs region/historical/administrative) with an ISO code for single countries.
 - **Single command per stage** — `isbn-db` CLI for ingest, scoring, area derivation, and stats.
 
 ## Quick Start
@@ -98,6 +99,7 @@ ISBN/
 | [Operations Guide](docs/operations-guide.md) | Setup, running, testing, common tasks, troubleshooting |
 | [Software Design](docs/software-design.md) | Architecture, data model, merge and scoring design |
 | [Configuration Reference](docs/configuration-reference.md) | Environment variables and settings |
+| [UI Data Model](docs/ui-data-model.md) | How to segregate the data for a UI (geography, dimensions, publisher geo) |
 | [Sources](docs/SOURCES.md) | Where the data comes from (paid/free, quality, licensing) |
 | [Analysis](docs/ANALYSIS.md) | Example analytical queries |
 | [Procurement](docs/PROCUREMENT.md) | How to procure the paid trade feeds (Nielsen, VLB) |

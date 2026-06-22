@@ -21,7 +21,8 @@ Priority markets: **UK & Germany**, then **US**, then **Norway & Sweden**.
   `openlibrary.py` (TSV/JSON), `dnb.py` (binary MARC21), `libris.py` (OAI-PMH MARCXML),
   `onix.py` (ONIX 3.0 — Nielsen/VLB), and `marc.py` (shared MARC21 field extraction).
 - `src/isbn_db/quality.py` — per-record quality score (completeness + source authority + plausibility).
-- `src/isbn_db/geo.py` — `registration_area` derived from the ISBN prefix (source-independent).
+- `src/isbn_db/geo.py` — `registration_area` from the ISBN prefix (source-independent), plus
+  deterministic classification into `area_kind` + `country_iso2`. See `docs/ui-data-model.md`.
 - `src/isbn_db/cli.py` — the `isbn-db` CLI.
 
 ## Data model

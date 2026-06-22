@@ -69,17 +69,37 @@ def cmd_score(args: argparse.Namespace) -> int:
 
 def cmd_derive_areas(args: argparse.Namespace) -> int:
     n = geo.derive_all(redo=args.redo, log=_log)
-    _log(f"[geo] DONE: set registration_area on {n:,} rows")
+    _log(f"[geo] registration_area set on {n:,} rows")
+    c = geo.classify_all(redo=args.redo, log=_log)
+    _log(f"[geo] DONE: classified {c:,} rows (area_kind + country_iso2)")
+    return 0
+
+
+def cmd_classify_areas(args: argparse.Namespace) -> int:
+    c = geo.classify_all(redo=args.redo, log=_log)
+    _log(f"[geo] DONE: classified {c:,} rows (area_kind + country_iso2)")
     return 0
 
 
 def cmd_areas(_args: argparse.Namespace) -> int:
     with connect() as conn:
-        _log("editions by registration area (top 20):")
-        for area, n in conn.execute(
-            "SELECT coalesce(registration_area,'(unknown)'), count(*) FROM editions GROUP BY 1 ORDER BY 2 DESC LIMIT 20"
+        _log("by area kind:")
+        for kind, n in conn.execute(
+            "SELECT coalesce(area_kind,'(unclassified)'), count(*) FROM editions GROUP BY 1 ORDER BY 2 DESC"
         ).fetchall():
-            _log(f"  {area:28s} {n:,}")
+            _log(f"  {kind:16s} {n:,}")
+        _log("top single countries (area_kind='country'):")
+        for area, iso, n in conn.execute(
+            "SELECT registration_area, coalesce(country_iso2,'--'), count(*) FROM editions "
+            "WHERE area_kind='country' GROUP BY 1,2 ORDER BY 3 DESC LIMIT 15"
+        ).fetchall():
+            _log(f"  {iso:3s} {area:24s} {n:,}")
+        _log("language areas (multi-country — not a single country):")
+        for area, n in conn.execute(
+            "SELECT registration_area, count(*) FROM editions WHERE area_kind='language_area' "
+            "GROUP BY 1 ORDER BY 2 DESC"
+        ).fetchall():
+            _log(f"  {area:24s} {n:,}")
     return 0
 
 
@@ -156,11 +176,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_score.add_argument("--rescore", action="store_true", help="recompute all rows (not just unscored)")
     p_score.set_defaults(func=cmd_score)
 
-    p_area = sub.add_parser("derive-areas", help="derive registration_area from each ISBN")
+    p_area = sub.add_parser("derive-areas", help="derive registration_area + classify (kind, ISO) from each ISBN")
     p_area.add_argument("--redo", action="store_true", help="recompute all rows")
     p_area.set_defaults(func=cmd_derive_areas)
 
-    sub.add_parser("areas", help="show editions by ISBN registration area").set_defaults(func=cmd_areas)
+    p_classify = sub.add_parser("classify-areas", help="classify registration_area into kind + country_iso2")
+    p_classify.add_argument("--redo", action="store_true", help="recompute all rows")
+    p_classify.set_defaults(func=cmd_classify_areas)
+
+    sub.add_parser("areas", help="show editions by area kind, country, and language area").set_defaults(func=cmd_areas)
     sub.add_parser("quality", help="show quality score distribution and common flags").set_defaults(func=cmd_quality)
     sub.add_parser("stats", help="show row counts and ingest progress").set_defaults(func=cmd_stats)
     return parser
