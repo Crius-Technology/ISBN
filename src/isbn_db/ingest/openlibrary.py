@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from .. import isbn
 from ..db import Edition
 from ..sources import Tier
+from . import countries
 
 SOURCE = "openlibrary"
 TIER = int(Tier.CROWD)
@@ -50,11 +51,47 @@ def _strip_keys(items: list, prefix: str) -> list[str]:
     return out
 
 
+def _first_str(rec: dict, key: str) -> str | None:
+    vals = rec.get(key)
+    if isinstance(vals, list) and vals and isinstance(vals[0], str):
+        return vals[0]
+    return None
+
+
+def _work_key(rec: dict) -> str | None:
+    works = rec.get("works")
+    if isinstance(works, list) and works and isinstance(works[0], dict):
+        key = works[0].get("key")
+        return key if isinstance(key, str) else None
+    return None
+
+
+def _identifiers(rec: dict) -> dict | None:
+    ids: dict[str, list[str]] = {}
+    for k, v in (rec.get("identifiers") or {}).items():
+        if isinstance(v, list) and v:
+            ids[k] = [str(x) for x in v[:5]]
+    for native in ("oclc_numbers", "lccn"):
+        v = rec.get(native)
+        if isinstance(v, list) and v:
+            ids[native.replace("_numbers", "")] = [str(x) for x in v[:5]]
+    return ids or None
+
+
+def _contributors(rec: dict) -> list[dict]:
+    out: list[dict] = []
+    for c in rec.get("contributions", [])[:30]:
+        if isinstance(c, str):
+            out.append({"name": c, "role": None})
+    return out
+
+
 def parse_record(rec: dict) -> Edition | None:
     isbn13 = _first_isbn13(rec)
     if not isbn13:
         return None
     publish_date = rec.get("publish_date")
+    genres = [g.rstrip(". ") for g in rec.get("genres", []) if isinstance(g, str)][:20]
     return Edition(
         isbn13=isbn13,
         source=SOURCE,
@@ -72,6 +109,16 @@ def parse_record(rec: dict) -> Edition | None:
         physical_format=rec.get("physical_format"),
         source_record_id=rec.get("key"),
         markets=MARKETS,
+        dewey=_first_str(rec, "dewey_decimal_class"),
+        genre_form=genres,
+        pub_country=countries.to_iso2(rec.get("publish_country")),
+        pub_city=_first_str(rec, "publish_places"),
+        work_key=_work_key(rec),
+        lc_class=_first_str(rec, "lc_classifications"),
+        contributors=_contributors(rec),
+        identifiers=_identifiers(rec),
+        series=_first_str(rec, "series"),
+        variant_titles=[t for t in rec.get("other_titles", []) if isinstance(t, str)][:20],
     )
 
 

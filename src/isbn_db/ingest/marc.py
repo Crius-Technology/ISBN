@@ -12,6 +12,7 @@ from pymarc import Record
 
 from .. import isbn
 from ..db import Edition
+from . import countries
 
 # An ISBN candidate inside a noisy 020 $a like "978-3-16-148410-0 Pb. : EUR 24.00".
 _ISBN_CANDIDATE = re.compile(r"97[89][\d-]{10,14}\d|\d[\d-]{8,12}[\dXx]")
@@ -88,6 +89,41 @@ def _pages(record: Record) -> int | None:
     return None
 
 
+def _pub_country(record: Record) -> str | None:
+    """ISO-2 country of publication from the 008 fixed field (chars 15-17)."""
+    f008 = record.get_fields("008")
+    if f008 and f008[0].data and len(f008[0].data) >= 18:
+        return countries.to_iso2(f008[0].data[15:18])
+    return None
+
+
+def _contributors(record: Record) -> list[dict]:
+    """[{name, role}] from 100 (main) and 700 (added) entries; role from $e relator or $4 code."""
+    out: list[dict] = []
+    for tag in ("100", "700"):
+        for f in record.get_fields(tag):
+            names = f.get_subfields("a")
+            if not names:
+                continue
+            role = (f.get_subfields("e") or f.get_subfields("4") or [None])[0]
+            out.append({"name": names[0].rstrip(",. "), "role": role.rstrip(",. ") if role else None})
+    return out[:30]
+
+
+def _identifiers(record: Record) -> dict | None:
+    """External control numbers worth keeping (OCLC) from 035 $a."""
+    oclc = []
+    for f in record.get_fields("035"):
+        for v in f.get_subfields("a"):
+            if "OCoLC" in v:
+                oclc.append(v.rsplit(")", 1)[-1])
+    return {"oclc": oclc[:5]} if oclc else None
+
+
+def _dedupe(values: list[str], limit: int) -> list[str]:
+    return list(dict.fromkeys(v.rstrip(",. ") for v in values))[:limit]
+
+
 def marc_record_to_edition(record: Record, *, source: str, tier: int, markets: list[str]) -> Edition | None:
     """Map a MARC21 record to an :class:`Edition`, or ``None`` if it has no valid ISBN."""
     isbn13 = first_isbn(record)
@@ -113,4 +149,14 @@ def marc_record_to_edition(record: Record, *, source: str, tier: int, markets: l
         physical_format=_subfield(record, "338", "a"),
         source_record_id=_control_field(record, "001"),
         markets=markets,
+        dewey=_subfield(record, "082", "a"),
+        genre_form=_dedupe(_all_subfields(record, "655", "a"), 20),
+        pub_country=_pub_country(record),
+        pub_city=_subfield(record, "264", "a") or _subfield(record, "260", "a"),
+        content_type=_subfield(record, "336", "a"),
+        lc_class=_subfield(record, "050", "a"),
+        contributors=_contributors(record),
+        identifiers=_identifiers(record),
+        series=_subfield(record, "830", "a") or _subfield(record, "490", "a"),
+        variant_titles=_dedupe(_all_subfields(record, "246", "a"), 20),
     )

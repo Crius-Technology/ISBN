@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 from .config import DB_DSN
 
@@ -33,6 +34,20 @@ CREATE TABLE IF NOT EXISTS editions (
     source_tier      SMALLINT NOT NULL,
     source_record_id TEXT,
     markets          TEXT[],
+    -- Source-derived classification / geography / linking (extracted at ingest).
+    dewey            TEXT,
+    dewey_class      SMALLINT,
+    genre_form       TEXT[],
+    pub_country      TEXT,
+    pub_city         TEXT,
+    work_key         TEXT,
+    content_type     TEXT,
+    lc_class         TEXT,
+    contributors     JSONB,
+    identifiers      JSONB,
+    series           TEXT,
+    variant_titles   TEXT[],
+    -- Derived post-ingest (NULL on insert).
     quality_score    SMALLINT,
     quality_flags    TEXT[],
     registration_area TEXT,
@@ -47,6 +62,18 @@ ALTER TABLE editions ADD COLUMN IF NOT EXISTS quality_flags TEXT[];
 ALTER TABLE editions ADD COLUMN IF NOT EXISTS registration_area TEXT;
 ALTER TABLE editions ADD COLUMN IF NOT EXISTS area_kind TEXT;
 ALTER TABLE editions ADD COLUMN IF NOT EXISTS country_iso2 TEXT;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS dewey TEXT;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS dewey_class SMALLINT;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS genre_form TEXT[];
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS pub_country TEXT;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS pub_city TEXT;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS work_key TEXT;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS content_type TEXT;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS lc_class TEXT;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS contributors JSONB;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS identifiers JSONB;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS series TEXT;
+ALTER TABLE editions ADD COLUMN IF NOT EXISTS variant_titles TEXT[];
 
 CREATE INDEX IF NOT EXISTS editions_source_idx        ON editions (source);
 CREATE INDEX IF NOT EXISTS editions_publisher_idx     ON editions (publisher);
@@ -54,6 +81,8 @@ CREATE INDEX IF NOT EXISTS editions_publish_year_idx  ON editions (publish_year)
 CREATE INDEX IF NOT EXISTS editions_quality_idx       ON editions (quality_score);
 CREATE INDEX IF NOT EXISTS editions_area_idx          ON editions (registration_area);
 CREATE INDEX IF NOT EXISTS editions_country_iso2_idx  ON editions (country_iso2);
+-- pub_country / dewey_class / work_key indexes are built post-ingest by build_search_indexes()
+-- (CONCURRENTLY) so init-db stays instant and they don't slow the bulk re-ingest.
 
 CREATE TABLE IF NOT EXISTS ingest_state (
     source            TEXT NOT NULL,
@@ -147,6 +176,18 @@ COLUMNS = (
     "source_tier",
     "source_record_id",
     "markets",
+    "dewey",
+    "dewey_class",
+    "genre_form",
+    "pub_country",
+    "pub_city",
+    "work_key",
+    "content_type",
+    "lc_class",
+    "contributors",
+    "identifiers",
+    "series",
+    "variant_titles",
 )
 
 # On conflict, overwrite only when the incoming source is at least as authoritative.
@@ -181,6 +222,18 @@ class Edition:
     physical_format: str | None = None
     source_record_id: str | None = None
     markets: list[str] = field(default_factory=list)
+    # Source-derived classification / geography / linking.
+    dewey: str | None = None
+    genre_form: list[str] = field(default_factory=list)
+    pub_country: str | None = None
+    pub_city: str | None = None
+    work_key: str | None = None
+    content_type: str | None = None
+    lc_class: str | None = None
+    contributors: list[dict] = field(default_factory=list)
+    identifiers: dict | None = None
+    series: str | None = None
+    variant_titles: list[str] = field(default_factory=list)
 
     def as_row(self) -> tuple:
         # Cap text lengths: dumps contain occasional garbage values (e.g. multi-KB publisher
@@ -203,6 +256,18 @@ class Edition:
             self.source_tier,
             _cap(self.source_record_id, 200),
             self.markets or None,
+            _cap(self.dewey, 50),
+            _dewey_class(self.dewey),
+            _cap_list(self.genre_form, 200, 20),
+            _cap(self.pub_country, 2),
+            _cap(self.pub_city, 200),
+            _cap(self.work_key, 100),
+            _cap(self.content_type, 100),
+            _cap(self.lc_class, 100),
+            Jsonb(self.contributors) if self.contributors else None,
+            Jsonb(self.identifiers) if self.identifiers else None,
+            _cap(self.series, 500),
+            _cap_list(self.variant_titles, 500, 20),
         )
 
 
@@ -210,6 +275,19 @@ def _cap(value: str | None, limit: int) -> str | None:
     if value is None:
         return None
     return value[:limit]
+
+
+def _dewey_class(raw: str | None) -> int | None:
+    """Top-level Dewey class (0,100,…900) from a raw DDC like '590.5' or '299/.6'. None if not numeric."""
+    if not raw:
+        return None
+    for ch in raw.strip().lstrip("["):
+        if ch.isdigit():
+            return int(ch) * 100
+        if ch in "./| ":
+            continue
+        return None  # leading letter (e.g. 'Fic', '[E]') — not a numeric class
+    return None
 
 
 def _cap_list(values: list[str], item_limit: int, count_limit: int) -> list[str] | None:
@@ -234,18 +312,24 @@ def build_search_indexes(log=print) -> None:
     These are IO-heavy on a 39M-row table, so they are created CONCURRENTLY (no write lock —
     safe to run while an ingest is in progress) and kept out of init_db(). Idempotent.
     """
-    indexes = (
+    trgm = (
         ("editions_title_trgm_idx", "title"),
         ("editions_publisher_trgm_idx", "publisher"),
     )
+    plain = (
+        ("editions_pub_country_idx", "pub_country"),
+        ("editions_dewey_class_idx", "dewey_class"),
+        ("editions_work_key_idx", "work_key"),
+    )
     # CREATE INDEX CONCURRENTLY cannot run inside a transaction block.
     with psycopg.connect(DB_DSN, autocommit=True) as conn:
-        for name, col in indexes:
+        for name, col in trgm:
             log(f"[index] building {name} on editions({col}) CONCURRENTLY — this can take a while…")
-            conn.execute(
-                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} "
-                f"ON editions USING gin ({col} gin_trgm_ops)"
-            )
+            conn.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON editions USING gin ({col} gin_trgm_ops)")
+            log(f"[index] {name} ready")
+        for name, col in plain:
+            log(f"[index] building {name} on editions({col}) CONCURRENTLY…")
+            conn.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON editions ({col})")
             log(f"[index] {name} ready")
 
 

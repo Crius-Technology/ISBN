@@ -24,6 +24,17 @@ def test_parse_full_record():
         "subjects": ["Fiction"],
         "number_of_pages": 200,
         "physical_format": "Paperback",
+        "dewey_decimal_class": ["823.914"],
+        "genres": ["Fiction.", "Detective and mystery stories."],
+        "publish_country": "enk",
+        "publish_places": ["London"],
+        "works": [{"key": "/works/OL42W"}],
+        "lc_classifications": ["PR6068"],
+        "series": ["Penguin Classics"],
+        "contributions": ["Smith, Jane"],
+        "identifiers": {"goodreads": ["123"], "librarything": ["456"]},
+        "oclc_numbers": ["789"],
+        "lccn": ["99001234"],
     }
     e = ol.parse_line(_line(rec))
     assert e is not None
@@ -37,6 +48,16 @@ def test_parse_full_record():
     assert e.num_pages == 200
     assert e.source == "openlibrary"
     assert e.source_tier == 1
+    # Tier 1+2 fields
+    assert e.dewey == "823.914"
+    assert e.genre_form == ["Fiction", "Detective and mystery stories"]
+    assert e.pub_country == "GB"  # 'enk' (England) -> GB
+    assert e.pub_city == "London"
+    assert e.work_key == "/works/OL42W"
+    assert e.lc_class == "PR6068"
+    assert e.series == "Penguin Classics"
+    assert e.contributors == [{"name": "Smith, Jane", "role": None}]
+    assert e.identifiers == {"goodreads": ["123"], "librarything": ["456"], "oclc": ["789"], "lccn": ["99001234"]}
 
 
 def test_isbn10_only_is_converted():

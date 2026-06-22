@@ -34,6 +34,15 @@ One row per ISBN-13 in `editions`. When the same ISBN comes from multiple source
 the **higher-tier** source (registrar 4 > national 3 > aggregator 2 > crowd 1); equal tier = last
 writer wins. It is whole-record replacement, not field-level merge.
 
+Beyond the core bibliographic fields, ingest also captures **classification, real geography, work
+identity and linking** from the source records: `dewey`/`dewey_class` (DDC), `genre_form[]` (MARC
+655 / OL genres), `pub_country` (ISO-2 from MARC 008 / OL `publish_country` via
+`ingest/countries.py`) and `pub_city` (the *actual* place of publication, independent of the ISBN
+prefix), `work_key` (OL work, collapses editions→works), `content_type`, `lc_class`, `contributors`
+(jsonb), `identifiers` (jsonb: OCLC/LCCN/Goodreads/…), `series`, `variant_titles[]`. Genre/Dewey is
+**not** derivable from the ISBN — it requires re-parsing the source dumps. ONIX would later add
+BISAC/Thema.
+
 ## Commands
 
 ```bash
