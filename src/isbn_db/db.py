@@ -70,7 +70,64 @@ CREATE TABLE IF NOT EXISTS ingest_state (
 
 -- For databases created before `cursor` existed (OAI-PMH resume token).
 ALTER TABLE ingest_state ADD COLUMN IF NOT EXISTS cursor TEXT;
+
+-- Trigram extension backs substring/fuzzy search on title/publisher (see build_search_indexes()).
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+-- Serving aggregates for the dashboard. Created empty (WITH NO DATA) so init-db stays cheap on a
+-- live 39M-row table; populate with `isbn-db refresh-aggregates` after each ingest/score run.
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_country_counts AS
+    SELECT country_iso2, registration_area, count(*) AS n
+    FROM editions
+    WHERE area_kind = 'country' AND country_iso2 IS NOT NULL
+    GROUP BY country_iso2, registration_area
+    WITH NO DATA;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_year_counts AS
+    SELECT publish_year AS year, count(*) AS n
+    FROM editions
+    WHERE publish_year IS NOT NULL
+    GROUP BY publish_year
+    WITH NO DATA;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_publisher_counts AS
+    SELECT publisher, country_iso2, count(*) AS n
+    FROM editions
+    WHERE publisher IS NOT NULL
+    GROUP BY publisher, country_iso2
+    WITH NO DATA;
+
+CREATE INDEX IF NOT EXISTS mv_publisher_counts_n_idx       ON mv_publisher_counts (n DESC);
+CREATE INDEX IF NOT EXISTS mv_publisher_counts_country_idx ON mv_publisher_counts (country_iso2);
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_areakind_counts AS
+    SELECT area_kind, count(*) AS n
+    FROM editions
+    GROUP BY area_kind
+    WITH NO DATA;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_source_counts AS
+    SELECT source, count(*) AS n
+    FROM editions
+    GROUP BY source
+    WITH NO DATA;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS mv_language_counts AS
+    SELECT lang, count(*) AS n
+    FROM editions, unnest(languages) AS lang
+    GROUP BY lang
+    WITH NO DATA;
 """
+
+# Materialized views serving the dashboard, refreshed together by refresh_aggregates().
+AGGREGATE_VIEWS = (
+    "mv_country_counts",
+    "mv_year_counts",
+    "mv_publisher_counts",
+    "mv_areakind_counts",
+    "mv_source_counts",
+    "mv_language_counts",
+)
 
 # Column order used by every batch insert. ``isbn13`` first (conflict key).
 COLUMNS = (
@@ -169,6 +226,37 @@ def init_db() -> None:
     with connect() as conn:
         conn.execute(SCHEMA)
         conn.commit()
+
+
+def build_search_indexes(log=print) -> None:
+    """Build the trigram GIN indexes that back substring/fuzzy search on title and publisher.
+
+    These are IO-heavy on a 39M-row table, so they are created CONCURRENTLY (no write lock —
+    safe to run while an ingest is in progress) and kept out of init_db(). Idempotent.
+    """
+    indexes = (
+        ("editions_title_trgm_idx", "title"),
+        ("editions_publisher_trgm_idx", "publisher"),
+    )
+    # CREATE INDEX CONCURRENTLY cannot run inside a transaction block.
+    with psycopg.connect(DB_DSN, autocommit=True) as conn:
+        for name, col in indexes:
+            log(f"[index] building {name} on editions({col}) CONCURRENTLY — this can take a while…")
+            conn.execute(
+                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} "
+                f"ON editions USING gin ({col} gin_trgm_ops)"
+            )
+            log(f"[index] {name} ready")
+
+
+def refresh_aggregates(log=print) -> None:
+    """Repopulate the dashboard materialized views. Run after each ingest/score/derive step."""
+    with connect() as conn:
+        for view in AGGREGATE_VIEWS:
+            log(f"[aggregate] refreshing {view}…")
+            conn.execute(f"REFRESH MATERIALIZED VIEW {view}")
+        conn.commit()
+    log(f"[aggregate] DONE: refreshed {len(AGGREGATE_VIEWS)} views")
 
 
 def upsert_batch(conn: psycopg.Connection, rows: list[tuple]) -> None:

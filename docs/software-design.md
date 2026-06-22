@@ -25,9 +25,11 @@ quality corpus of book metadata.
 ### Scope
 
 In scope: the ingest pipeline (Open Library, DNB, LIBRIS, ONIX), the PostgreSQL data model, the
-cross-source merge, quality scoring, registration-area derivation, and the `isbn-db` CLI. Out of
-scope: a serving API, a UI, and real-time/streaming updates — the system is a batch pipeline plus an
-analytical database queried directly via SQL.
+cross-source merge, quality scoring, registration-area derivation, the `isbn-db` CLI, and a
+read-only FastAPI **search API** (`src/isbn_db/api/`) that exposes the corpus to the Explorer UI and
+the LLM-gateway MCP tools (see `docs/hosting-and-operations.md`). Out of scope: write/ingest APIs,
+authentication beyond a bearer key, and real-time/streaming updates — ingestion remains a batch
+pipeline, and the API serves the resulting analytical database.
 
 ### Design Goals
 

@@ -56,9 +56,13 @@ def derive_all(*, batch: int = 1_000_000, redo: bool = False, log=print) -> int:
     is still NULL; pass ``redo`` to recompute all (e.g. after refreshing the group table).
     """
     case_sql = build_area_case_sql("isbn13")
+    # The inner select must exclude rows whose prefix matches no group: their derived area is NULL,
+    # so updating NULL -> NULL leaves them selectable forever and the loop never terminates. The
+    # `({case_sql}) IS NOT NULL` guard skips those unknown-prefix rows (they stay permanently NULL).
     sql = (
         f"UPDATE editions SET registration_area = {case_sql} "
-        "WHERE isbn13 IN (SELECT isbn13 FROM editions WHERE registration_area IS NULL "
+        "WHERE isbn13 IN (SELECT isbn13 FROM editions "
+        f"WHERE registration_area IS NULL AND ({case_sql}) IS NOT NULL "
         "LIMIT %(batch)s FOR UPDATE SKIP LOCKED)"
     )
     total = 0

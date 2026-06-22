@@ -36,6 +36,8 @@ Priority markets: UK & Germany, then US, then Norway & Sweden.
   International ISBN Agency data), deterministically classified into `area_kind` (country vs
   language-area vs region/historical/administrative) with an ISO code for single countries.
 - **Single command per stage** — `isbn-db` CLI for ingest, scoring, area derivation, and stats.
+- **Search API** — a read-only FastAPI service (`isbn-db serve`) with faceted search, record lookup,
+  and dashboard stats over the corpus; the one HTTP surface for the Explorer UI and MCP tools.
 
 ## Quick Start
 
@@ -66,7 +68,7 @@ uv run isbn-db stats
 |---|---|
 | **Language** | Python 3.13+ |
 | **Runtime** | CPython, `uv`-managed virtualenv |
-| **Framework** | `argparse` CLI + `psycopg` 3 |
+| **Framework** | `argparse` CLI + `psycopg` 3; `FastAPI` + `uvicorn` for the search API |
 | **Database** | PostgreSQL 16 |
 | **Parsing** | `pymarc` (MARC/MARCXML), stdlib (JSON/XML/ONIX) |
 | **Tooling** | `ruff`, `pytest`, SonarQube |
@@ -82,8 +84,9 @@ ISBN/
 │   ├── sources.py        # Source registry (tier/cost/licensing)
 │   ├── db.py             # Schema + source-priority merge upsert
 │   ├── quality.py        # Per-record quality scoring
-│   ├── geo.py            # registration_area derivation
+│   ├── geo.py            # registration_area derivation + area classification
 │   ├── ingest/           # One module per source format (+ shared MARC)
+│   ├── api/              # FastAPI search service (UI + MCP consume this)
 │   └── cli.py            # `isbn-db` entry point
 ├── tests/                # pytest unit tests
 ├── scripts/              # run_full_ingest.sh, build_report.py, build_isbn_groups.py
@@ -100,6 +103,7 @@ ISBN/
 | [Software Design](docs/software-design.md) | Architecture, data model, merge and scoring design |
 | [Configuration Reference](docs/configuration-reference.md) | Environment variables and settings |
 | [UI Data Model](docs/ui-data-model.md) | How to segregate the data for a UI (geography, dimensions, publisher geo) |
+| [Hosting & Operations](docs/hosting-and-operations.md) | AWS migration (RDS + ECS), the UI/API/MCP coupling, and weekly-refresh design |
 | [Sources](docs/SOURCES.md) | Where the data comes from (paid/free, quality, licensing) |
 | [Analysis](docs/ANALYSIS.md) | Example analytical queries |
 | [Procurement](docs/PROCUREMENT.md) | How to procure the paid trade feeds (Nielsen, VLB) |

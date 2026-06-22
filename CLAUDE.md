@@ -23,6 +23,9 @@ Priority markets: **UK & Germany**, then **US**, then **Norway & Sweden**.
 - `src/isbn_db/quality.py` — per-record quality score (completeness + source authority + plausibility).
 - `src/isbn_db/geo.py` — `registration_area` from the ISBN prefix (source-independent), plus
   deterministic classification into `area_kind` + `country_iso2`. See `docs/ui-data-model.md`.
+- `src/isbn_db/api/` — FastAPI search service (`app.py`, `routes.py`, `queries.py`, `models.py`):
+  the single HTTP surface consumed by the Explorer UI and the future LLM-gateway MCP tools. Run with
+  `isbn-db serve`; OpenAPI at `/openapi.json`. See `docs/hosting-and-operations.md`.
 - `src/isbn_db/cli.py` — the `isbn-db` CLI.
 
 ## Data model
@@ -41,6 +44,9 @@ uv run isbn-db ingest-libris                                 # Swedish national 
 uv run isbn-db ingest-onix <file>.xml --source nielsen       # paid ONIX feed
 uv run isbn-db score          # quality scores (run after each ingest)
 uv run isbn-db derive-areas   # country/language area per ISBN
+uv run isbn-db refresh-aggregates   # repopulate dashboard materialized views (after each ingest)
+uv run isbn-db build-search-index   # pg_trgm GIN indexes for text search (CONCURRENTLY, slow, once)
+uv run isbn-db serve --port 8077    # run the FastAPI search API
 uv run isbn-db quality | areas | stats
 ```
 

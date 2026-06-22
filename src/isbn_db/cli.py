@@ -14,7 +14,7 @@ import os
 import sys
 
 from . import geo, quality
-from .db import connect, init_db
+from .db import build_search_indexes, connect, init_db, refresh_aggregates
 from .ingest import libris, onix
 from .ingest.common import open_gzip_text, run_ingest
 from .ingest.dnb import SOURCE as DNB_SOURCE
@@ -78,6 +78,26 @@ def cmd_derive_areas(args: argparse.Namespace) -> int:
 def cmd_classify_areas(args: argparse.Namespace) -> int:
     c = geo.classify_all(redo=args.redo, log=_log)
     _log(f"[geo] DONE: classified {c:,} rows (area_kind + country_iso2)")
+    return 0
+
+
+def cmd_refresh_aggregates(_args: argparse.Namespace) -> int:
+    refresh_aggregates(log=_log)
+    return 0
+
+
+def cmd_build_search_index(_args: argparse.Namespace) -> int:
+    build_search_indexes(log=_log)
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from .api import create_app
+
+    _log(f"[api] serving on http://{args.host}:{args.port} (OpenAPI at /openapi.json)")
+    uvicorn.run(create_app(), host=args.host, port=args.port, log_level="info")
     return 0
 
 
@@ -183,6 +203,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_classify = sub.add_parser("classify-areas", help="classify registration_area into kind + country_iso2")
     p_classify.add_argument("--redo", action="store_true", help="recompute all rows")
     p_classify.set_defaults(func=cmd_classify_areas)
+
+    sub.add_parser(
+        "refresh-aggregates", help="repopulate the dashboard materialized views (run after each ingest)"
+    ).set_defaults(func=cmd_refresh_aggregates)
+
+    sub.add_parser(
+        "build-search-index", help="build the pg_trgm GIN indexes for text search (CONCURRENTLY, slow)"
+    ).set_defaults(func=cmd_build_search_index)
+
+    p_serve = sub.add_parser("serve", help="run the FastAPI search API")
+    p_serve.add_argument("--host", default="0.0.0.0")  # noqa: S104
+    p_serve.add_argument("--port", type=int, default=8000)
+    p_serve.set_defaults(func=cmd_serve)
 
     sub.add_parser("areas", help="show editions by area kind, country, and language area").set_defaults(func=cmd_areas)
     sub.add_parser("quality", help="show quality score distribution and common flags").set_defaults(func=cmd_quality)
