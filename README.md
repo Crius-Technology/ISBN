@@ -85,6 +85,7 @@ ISBN/
 │   ├── db.py             # Schema + source-priority merge upsert
 │   ├── quality.py        # Per-record quality scoring
 │   ├── geo.py            # registration_area derivation + area classification
+│   ├── normalize.py      # Publisher-name normalization for cross-source aggregation
 │   ├── ingest/           # One module per source format (+ shared MARC)
 │   ├── api/              # FastAPI search service (UI + MCP consume this)
 │   └── cli.py            # `isbn-db` entry point
